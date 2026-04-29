@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Finger game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: radial-gradient(circle, #111, #000);
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    video {
+      position: fixed;
+      right: 10px;
+      bottom: 10px;
+      width: 200px;
+      border: 2px solid white;
+      border-radius: 10px;
+      z-index: 1;
+    }
+
+    canvas {
+      position: fixed;
+      right: 10px;
+      bottom: 10px;
+      width: 200px;
+      height: 150px;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #cursor {
+      width: 40px;
+      height: 40px;
+      background: cyan;
+      border-radius: 50%;
+      position: absolute;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 20px cyan;
+    }
+
+    .target {
+      width: 60px;
+      height: 60px;
+      background: red;
+      border-radius: 50%;
+      position: absolute;
+      box-shadow: 0 0 20px red;
+    }
+
+    #score {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="score">Score: 0</div>
+<div id="cursor"></div>
+<div id="target" class="target"></div>
+
+<video id="webcam" autoplay playsinline></video>
+<canvas id="overlay"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js"></script>
+
+<script>
+  const videoElement = document.getElementById("webcam");
+  const cursor = document.getElementById("cursor");
+  const target = document.getElementById("target");
+  const scoreDisplay = document.getElementById("score");
+  const canvas = document.getElementById("overlay");
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = 640;
+  canvas.height = 480;
+
+  let cursorX = window.innerWidth / 2;
+  let cursorY = window.innerHeight / 2;
+  let score = 0;
+
+  function spawnTarget() {
+    const x = Math.random() * (window.innerWidth - 60);
+    const y = Math.random() * (window.innerHeight - 60);
+    target.style.left = x + "px";
+    target.style.top = y + "px";
+  }
+
+  spawnTarget();
+
+  // id: tracking tangan buat menggerakkan kursor dan mendeteksi gestur kepalan tangan
+  // eng: hand tracking for moving the cursor and detecting fist gesture
+  const hands = new Hands({
+    locateFile: file =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+  });
+
+  function isFist(landmarks) {
+    const tips = [8, 12, 16, 20];
+    let folded = 0;
+
+    for (let tip of tips) {
+      if (landmarks[tip].y > landmarks[tip - 2].y) folded++;
+    }
+
+    return folded >= 3;
+  }
+
+  hands.onResults(results => {
+    if (results.multiHandLandmarks.length > 0) {
+      results.multiHandLandmarks.forEach((landmarks, index) => {
+        const handedness = results.multiHandedness[index].label;
+
+        if (handedness === "Right") {
+          const indexFinger = landmarks[8];
+          cursorX = window.innerWidth * (1 - indexFinger.x);
+          cursorY = window.innerHeight * indexFinger.y;
+
+          cursor.style.left = cursorX + "px";
+          cursor.style.top = cursorY + "px";
+        }
+
+        if (handedness === "Left") {
+          if (isFist(landmarks)) checkCollision();
+        }
+      });
+    }
+  });
+
+  function checkCollision() {
+    const targetRect = target.getBoundingClientRect();
+    const dx = cursorX - (targetRect.left + 30);
+    const dy = cursorY - (targetRect.top + 30);
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 50) destroyTarget();
+  }
+
+  function destroyTarget() {
+    target.style.background = "yellow";
+    target.style.boxShadow = "0 0 30px yellow";
+
+    setTimeout(() => {
+      target.style.background = "red";
+      target.style.boxShadow = "0 0 20px red";
+      spawnTarget();
+    }, 150);
+
+    score++;
+    scoreDisplay.innerText = "Score: " + score;
+  }
+
+  // id: sensor buat muka
+  // eng: face sensor
+
+  // id: untuk sekarang belum bisa jalan karena ada masalah dengan kamera yang tidak bisa diakses oleh dua library sekaligus
+  // eng: for now it doesn't work because there's an issue with the camera being accessed by two libraries at the same time
+
+  // id: kapan kapan gw benerin deh
+  // eng: I'll fix it someday
+  const faceDetection = new FaceDetection({
+    locateFile: file =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+  });
+
+  faceDetection.setOptions({
+    model: "short",
+    minDetectionConfidence: 0.6
+  });
+
+  faceDetection.onResults(results => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (results.detections.length > 0) {
+      results.detections.forEach(detection => {
+        const box = detection.boundingBox;
+        ctx.fillStyle = "black";
+        ctx.globalAlpha = 0;
+        ctx.fillRect(
+          box.xCenter * canvas.width - (box.width * canvas.width) / 2,
+          box.yCenter * canvas.height - (box.height * canvas.height) / 2,
+          box.width * canvas.width,
+          box.height * canvas.height
+        );
+      });
+    }
+  });
+
+  // id: setup kamera
+  // eng: setup camera
+  const camera = new Camera(videoElement, {
+    onFrame: async () => {
+      await hands.send({ image: videoElement });
+      await faceDetection.send({ image: videoElement });
+    },
+    width: 640,
+    height: 480
+  });
+
+  camera.start();
+</script>
+
+</body>
+</html>
